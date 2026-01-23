@@ -10,7 +10,7 @@ local CLI tool.
 
 ## Features
 
-- **Single-file setup** – just download `codex.sh`
+- **Single-file setup** – just download `codex-box.sh`
 - **Persistent Codex sessions and config** via `~/.codex`
 - **Runs as non-root** (uses the `node` user, UID 1000)
 - **Project-local execution** (current directory mounted as workspace)
@@ -32,14 +32,14 @@ local CLI tool.
 Download the script and make it executable:
 
 ```bash
-curl -LO https://raw.githubusercontent.com/<your-org>/codex-box/main/codex.sh
-chmod +x codex.sh
+curl -LO https://raw.githubusercontent.com/davidruzicka/codex-box/main/codex-box.sh
+chmod +x codex-box.sh
 ```
 
 Optionally build the Docker image ahead of time:
 
 ```bash
-./codex.sh --build -- --help
+./codex-box.sh --build -- --help
 ```
 
 ---
@@ -49,21 +49,21 @@ Optionally build the Docker image ahead of time:
 Run Codex in the current project directory:
 
 ```bash
-./codex.sh -- <codex arguments>
+./codex-box.sh -- <codex arguments>
 ```
 
 Examples:
 
 ```bash
-./codex.sh -- --help
-./codex.sh -- resume <SESSION_ID>
-./codex.sh -- -m gpt-5-codex
+./codex-box.sh -- --help
+./codex-box.sh -- resume <SESSION_ID>
+./codex-box.sh -- -m gpt-4-codex
 ```
 
 ### Using a Different Project Directory
 
 ```bash
-./codex.sh --project /path/to/project -- <codex arguments>
+./codex-box.sh --project /path/to/project -- <codex arguments>
 ```
 
 ---

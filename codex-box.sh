@@ -19,12 +19,12 @@ FORCE_BUILD=0
 usage() {
   cat <<'EOF'
 Usage:
-  ./codex.sh [--build] [--force-build] [--project <path>] -- [codex-args...]
+  ./codex-box.sh [--build] [--force-build] [--project <path>] -- [codex-args...]
 
 Examples:
-  ./codex.sh -- --help
-  ./codex.sh --build -- resume <SESSION_ID>
-  ./codex.sh --project /path/to/project -- -m gpt-5-codex
+  ./codex-box.sh -- --help
+  ./codex-box.sh --build -- resume <SESSION_ID>
+  ./codex-box.sh --project /path/to/project -- -m gpt-4-codex
 
 Options:
   --build         Build the image if it does not exist yet
@@ -56,7 +56,7 @@ done
 mkdir -p "$CODEX_DIR_HOST"
 
 # ------------------ inline Dockerfile ------------------
-read -r -d '' DOCKERFILE <<'EOF'
+DOCKERFILE=$(cat <<'EOF'
 FROM node:24-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -71,13 +71,14 @@ USER node
 
 ENTRYPOINT ["/usr/bin/tini","--","codex"]
 EOF
+)
 
 # ------------------ build image ------------------
 image_exists() {
   docker image inspect "$IMAGE_NAME" >/dev/null 2>&1
 }
 
-if [[ "$BUILD" -eq 1 || "$FORCE_BUILD" -eq 1 || ! image_exists ]]; then
+if [[ "$BUILD" -eq 1 || "$FORCE_BUILD" -eq 1 ]] || ! image_exists; then
   echo "▶ Building Docker image: $IMAGE_NAME"
   if [[ "$FORCE_BUILD" -eq 1 ]]; then
     docker build --no-cache -t "$IMAGE_NAME" - <<EOF
@@ -97,7 +98,11 @@ for var in OPENAI_API_KEY OPENAI_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY; do
 done
 
 # ------------------ run ------------------
-exec docker run --rm -it \
+# Use -it only if TTY is available
+DOCKER_ARGS=(run --rm)
+[[ -t 0 ]] && [[ -t 1 ]] && DOCKER_ARGS+=(-it)
+
+exec docker "${DOCKER_ARGS[@]}" \
   "${ENV_ARGS[@]}" \
   -e HOME="$HOME_CONT" \
   -v "$CODEX_DIR_HOST:$CODEX_DIR_CONT" \
