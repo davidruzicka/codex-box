@@ -1,17 +1,24 @@
 # codex-box
 
-A minimal, single-file Docker wrapper for running the OpenAI Codex CLI with
-persistent sessions, safe UID handling, and a project-local workspace.
+A minimal, single-file Docker wrapper for running the OpenAI Codex CLI,
+Claude Code and Gemini CLI with persistent sessions, safe UID handling
+and a project-local workspace.
 
 `codex-box` lets you run Codex in an isolated container while behaving like a
+local CLI tool.
+
+`claude-box` lets you run Claude Code in an isolated container while behaving like a
+local CLI tool.
+
+`gemini-box` lets you run Gemini CLI in an isolated container while behaving like a
 local CLI tool.
 
 ---
 
 ## Features
 
-- **Single-file setup** – just download `codex-box.sh`
-- **Persistent Codex sessions and config** via `~/.codex`
+- **Single-file setup** – just download `codex-box.sh` (or equivalent)
+- **Persistent Codex sessions and config** via `~/.codex` (or tool specific directories/files)
 - **Runs as non-root** (uses the `node` user, UID 1000)
 - **Project-local execution** (current directory mounted as workspace)
 - **No Dockerfile needed** – image is built automatically
@@ -21,10 +28,12 @@ local CLI tool.
 
 ## Requirements
 
-- Docker
+- Docker (or Podman with Docker compatible mode)
 - Bash
-- An OpenAI API key
+- Athorization for specific tool
 
+---
+_Examples below are for codex-box.sh._
 ---
 
 ## Installation
@@ -58,6 +67,9 @@ Examples:
 ./codex-box.sh -- --help
 ./codex-box.sh -- resume <SESSION_ID>
 ./codex-box.sh -- -m gpt-4-codex
+./codex-box.sh -d local -- --help
+./codex-box.sh -d 192.168.31.1 -- --help
+./codex-box.sh -d local -e HTTP_PROXY=http://proxy:3128 -s -- --help
 ```
 
 ### Using a Different Project Directory
@@ -100,6 +112,16 @@ You can also override internal settings:
 | `CODEX_IMAGE` | Docker image name | `codex-box:node24` |
 | `CODEX_PROJECT_DIR` | Project directory to mount | current directory |
 | `CODEX_DIR_HOST` | Host Codex config directory | `~/.codex` |
+
+## DNS Override
+
+Use `-d local` to pass the host resolver into the container, or provide an IP
+address to pass through as `--dns`.
+
+## Saved Defaults
+
+Use `-s` to save the current `-d` and `-e` settings to `~/.codex-box/config`.
+The file is loaded automatically on startup and CLI flags override saved values.
 
 ---
 

@@ -2,17 +2,17 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# codex-box — single-file runner for Codex CLI in Docker
+# claude-box — single-file runner for Claude Code CLI in Docker
 # ------------------------------------------------------------
 
-IMAGE_NAME="${CODEX_IMAGE:-codex-box:node24}"
-PROJECT_DIR="${CODEX_PROJECT_DIR:-$PWD}"
-CODEX_DIR_HOST="${CODEX_DIR_HOST:-$HOME/.codex}"
-CODEX_BOX_CONFIG_DIR="${CODEX_BOX_CONFIG_DIR:-$HOME/.codex-box}"
-CODEX_BOX_CONFIG_FILE="$CODEX_BOX_CONFIG_DIR/config"
+IMAGE_NAME="${CLAUDE_IMAGE:-claude-box:node24}"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
+CLAUDE_DIR_HOST="${CLAUDE_DIR_HOST:-$HOME/.claude}"
+CLAUDE_JSON_HOST="${CLAUDE_JSON_HOST:-$HOME/.claude.json}"
 
 HOME_CONT="/home/node"
-CODEX_DIR_CONT="${HOME_CONT}/.codex"
+CLAUDE_DIR_CONT="${HOME_CONT}/.claude"
+CLAUDE_JSON_CONT="${HOME_CONT}/.claude.json"
 WORKDIR_CONT="/workspace"
 
 BUILD=0
@@ -22,18 +22,18 @@ SESSION_ENV_ARGS=()
 SESSION_DOCKER_ARGS=()
 DNS_MODE=""
 DNS_IP=""
-SAVE_CONFIG=0
+EXTRA_MOUNT_ARGS=()
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./codex-box.sh [--build] [--force-build] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [codex-args...]
+  ./claude-box.sh [--build] [--force-build] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] -- [claude-args...]
 
 Examples:
-  ./codex-box.sh -- --help
-  ./codex-box.sh --build -- resume <SESSION_ID>
-  ./codex-box.sh --project /path/to/project -- -m gpt-4-codex
-  ./codex-box.sh -e GITLAB_TOKEN=abc123 -e TEST_API_KEY=xyz -- --help
+  ./claude-box.sh -- --help
+  ./claude-box.sh --build -- chat
+  ./claude-box.sh --project /path/to/project -- --model claude-3-opus
+  ./claude-box.sh -e GITLAB_TOKEN=abc123 -e TEST_API_KEY=xyz -- --help
 
 Options:
   --build         Build the image if it does not exist yet
@@ -41,73 +41,12 @@ Options:
   --project PATH  Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
-  -s               Save -d and -e settings to ~/.codex-box/config
 
 Display/Session passthrough:
-  If an X11 or Wayland session is detected, codex-box automatically forwards
-  the needed env vars and sockets so Codex can access desktop image input.
+  If an X11 or Wayland session is detected, claude-box automatically forwards
+  the needed env vars and sockets so Claude can access desktop image input.
 EOF
 }
-
-set_env_arg() {
-  local kv="$1"
-  local name="${kv%%=*}"
-  local new_args=()
-  local i=0
-
-  while [[ $i -lt ${#EXTRA_ENV_ARGS[@]} ]]; do
-    if [[ "${EXTRA_ENV_ARGS[i]}" == "-e" ]]; then
-      local val="${EXTRA_ENV_ARGS[i+1]:-}"
-      local existing_name="${val%%=*}"
-      if [[ "$existing_name" == "$name" ]]; then
-        i=$((i+2))
-        continue
-      fi
-      new_args+=("-e" "$val")
-      i=$((i+2))
-    else
-      new_args+=("${EXTRA_ENV_ARGS[i]}")
-      i=$((i+1))
-    fi
-  done
-
-  EXTRA_ENV_ARGS=("${new_args[@]}")
-  EXTRA_ENV_ARGS+=("-e" "$kv")
-}
-
-load_config() {
-  [[ -f "$CODEX_BOX_CONFIG_FILE" ]] || return 0
-
-  while IFS= read -r line; do
-    line="${line%%$'\r'}"
-    [[ -z "$line" || "$line" == \#* ]] && continue
-    case "$line" in
-      DNS_MODE=*) DNS_MODE="${line#DNS_MODE=}" ;;
-      DNS_IP=*) DNS_IP="${line#DNS_IP=}" ;;
-      ENV\ *) set_env_arg "${line#ENV }" ;;
-    esac
-  done < "$CODEX_BOX_CONFIG_FILE"
-}
-
-save_config() {
-  mkdir -p "$CODEX_BOX_CONFIG_DIR"
-  {
-    echo "# codex-box config"
-    echo "DNS_MODE=$DNS_MODE"
-    echo "DNS_IP=$DNS_IP"
-    local i=0
-    while [[ $i -lt ${#EXTRA_ENV_ARGS[@]} ]]; do
-      if [[ "${EXTRA_ENV_ARGS[i]}" == "-e" ]]; then
-        echo "ENV ${EXTRA_ENV_ARGS[i+1]}"
-        i=$((i+2))
-      else
-        i=$((i+1))
-      fi
-    done
-  } > "$CODEX_BOX_CONFIG_FILE"
-}
-
-load_config
 
 # ------------------ argument parsing ------------------
 while [[ $# -gt 0 ]]; do
@@ -120,7 +59,7 @@ while [[ $# -gt 0 ]]; do
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
       if [[ -n "${2:-}" ]]; then
-        set_env_arg "$2"
+        EXTRA_ENV_ARGS+=(-e "$2")
         shift 2
       else
         echo "Error: -e requires an argument (VAR or VAR=value)" >&2
@@ -131,10 +70,8 @@ while [[ $# -gt 0 ]]; do
       if [[ -n "${2:-}" ]]; then
         if [[ "$2" == "local" ]]; then
           DNS_MODE="local"
-          DNS_IP=""
         else
           DNS_IP="$2"
-          DNS_MODE=""
         fi
         shift 2
       else
@@ -142,8 +79,6 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       ;;
-    -s)
-      SAVE_CONFIG=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     --)
@@ -155,7 +90,7 @@ done
 
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
-mkdir -p "$CODEX_DIR_HOST"
+mkdir -p "$CLAUDE_DIR_HOST"
 
 # ------------------ inline Dockerfile ------------------
 DOCKERFILE=$(cat <<'EOF'
@@ -181,13 +116,13 @@ RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_
   && dpkg -i /tmp/bat.deb || apt-get install -f -y \
   && rm /tmp/bat.deb
 
-RUN npm install -g @openai/codex
+RUN npm install -g @anthropic-ai/claude-code
 
 ENV HOME=/home/node
 WORKDIR /workspace
 USER node
 
-ENTRYPOINT ["/usr/bin/tini","--","codex"]
+ENTRYPOINT ["/usr/bin/tini","--","claude"]
 EOF
 )
 
@@ -211,7 +146,7 @@ fi
 
 # ------------------ env passthrough ------------------
 ENV_ARGS=()
-for var in OPENAI_API_KEY OPENAI_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+for var in ANTHROPIC_API_KEY ANTHROPIC_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY; do
   [[ -n "${!var:-}" ]] && ENV_ARGS+=(-e "$var=${!var}")
 done
 
@@ -235,6 +170,11 @@ if [[ "$DNS_MODE" == "local" ]]; then
   fi
 elif [[ -n "$DNS_IP" ]]; then
   DNS_ARGS+=(--dns "$DNS_IP")
+fi
+
+# ------------------ extra mounts ------------------
+if [[ -f "$CLAUDE_JSON_HOST" ]]; then
+  EXTRA_MOUNT_ARGS+=(-v "$CLAUDE_JSON_HOST:$CLAUDE_JSON_CONT:ro")
 fi
 
 # ------------------ X11 / Wayland passthrough ------------------
@@ -276,12 +216,22 @@ if [[ -n "${WAYLAND_DISPLAY:-}" && -n "${XDG_RUNTIME_DIR:-}" ]]; then
 fi
 
 # ------------------ run ------------------
-# Use -it only if TTY is available
+# Default to interactive chat when no Claude args are provided.
+if [[ $# -eq 0 ]]; then
+  set -- chat
+fi
+
+# Use -it only if TTY is available.
 DOCKER_ARGS=(run --rm --add-host=host.docker.internal:host-gateway)
 [[ -t 0 ]] && [[ -t 1 ]] && DOCKER_ARGS+=(-it)
 
-if [[ "$SAVE_CONFIG" -eq 1 ]]; then
-  save_config
+# Claude interactive modes require a TTY. Without it, the process can appear frozen.
+if [[ ! -t 0 || ! -t 1 ]]; then
+  if [[ "${1:-}" == "chat" ]]; then
+    echo "Error: Claude chat mode requires an interactive terminal (TTY)." >&2
+    echo "Run from a terminal, or pass a non-interactive command (e.g. ./claude-box.sh -- --help)." >&2
+    exit 1
+  fi
 fi
 
 exec docker "${DOCKER_ARGS[@]}" \
@@ -290,7 +240,8 @@ exec docker "${DOCKER_ARGS[@]}" \
   "${SESSION_ENV_ARGS[@]}" \
   "${SESSION_DOCKER_ARGS[@]}" \
   -e HOME="$HOME_CONT" \
-  -v "$CODEX_DIR_HOST:$CODEX_DIR_CONT" \
+  "${EXTRA_MOUNT_ARGS[@]}" \
+  -v "$CLAUDE_DIR_HOST:$CLAUDE_DIR_CONT" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
   "$IMAGE_NAME" \
