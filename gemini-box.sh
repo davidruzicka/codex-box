@@ -5,9 +5,11 @@ set -euo pipefail
 # gemini-box — single-file runner for Gemini CLI in Docker
 # ------------------------------------------------------------
 
-IMAGE_NAME="${GEMINI_IMAGE:-gemini-box:node24}"
+BASE_IMAGE_NAME="${GEMINI_IMAGE:-gemini-box:node24}"
 PROJECT_DIR="${GEMINI_PROJECT_DIR:-$PWD}"
 GEMINI_DIR_HOST="${GEMINI_DIR_HOST:-$HOME/.gemini}"
+GEMINI_BOX_CONFIG_DIR="${GEMINI_BOX_CONFIG_DIR:-$HOME/.gemini-box}"
+GEMINI_BOX_CONFIG_FILE="$GEMINI_BOX_CONFIG_DIR/config"
 
 HOME_CONT="/home/node"
 GEMINI_DIR_CONT="${HOME_CONT}/.gemini"
@@ -20,11 +22,20 @@ SESSION_ENV_ARGS=()
 SESSION_DOCKER_ARGS=()
 DNS_MODE=""
 DNS_IP=""
+DNS_ARGS=()
+BUILD_NETWORK_ARGS=()
+SAVE_CONFIG=0
+LATEST_GEMINI_VERSION=""
+IMAGE_REPO=""
+IMAGE_TAG_BASE=""
+TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+USE_VERSIONED_TAG=1
+AUTO_UPDATE=1
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./gemini-box.sh [--build] [--force-build] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] -- [gemini-args...]
+  ./gemini-box.sh [--build] [--force-build] [--no-auto-update] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [gemini-args...]
 
 Examples:
   ./gemini-box.sh -- --help
@@ -35,15 +46,119 @@ Examples:
 Options:
   --build         Build the image if it does not exist yet
   --force-build   Always rebuild the image (no cache)
+  --no-auto-update Disable Gemini version check and auto rebuild to latest version
   --project PATH  Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
+  -s               Save -d and -e settings to ~/.gemini-box/config
+
+Auto-update:
+  By default, gemini-box checks the latest @google/gemini-cli version from npm.
+  It builds/runs a versioned image tag (<base-tag>-gemini-<version>) and
+  rebuilds automatically when a newer Gemini version is available.
+  After a successful rebuild, old gemini version tags for the same base tag
+  are removed.
 
 Display/Session passthrough:
   If an X11 or Wayland session is detected, gemini-box automatically forwards
   the needed env vars and sockets so Gemini can access desktop image input.
 EOF
 }
+
+set_env_arg() {
+  local kv="$1"
+  local name="${kv%%=*}"
+  local new_args=()
+  local i=0
+
+  while [[ $i -lt ${#EXTRA_ENV_ARGS[@]} ]]; do
+    if [[ "${EXTRA_ENV_ARGS[i]}" == "-e" ]]; then
+      local val="${EXTRA_ENV_ARGS[i+1]:-}"
+      local existing_name="${val%%=*}"
+      if [[ "$existing_name" == "$name" ]]; then
+        i=$((i+2))
+        continue
+      fi
+      new_args+=("-e" "$val")
+      i=$((i+2))
+    else
+      new_args+=("${EXTRA_ENV_ARGS[i]}")
+      i=$((i+1))
+    fi
+  done
+
+  EXTRA_ENV_ARGS=("${new_args[@]}")
+  EXTRA_ENV_ARGS+=("-e" "$kv")
+}
+
+load_config() {
+  [[ -f "$GEMINI_BOX_CONFIG_FILE" ]] || return 0
+
+  while IFS= read -r line; do
+    line="${line%%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      DNS_MODE=*) DNS_MODE="${line#DNS_MODE=}" ;;
+      DNS_IP=*) DNS_IP="${line#DNS_IP=}" ;;
+      ENV\ *) set_env_arg "${line#ENV }" ;;
+    esac
+  done < "$GEMINI_BOX_CONFIG_FILE"
+}
+
+save_config() {
+  mkdir -p "$GEMINI_BOX_CONFIG_DIR"
+  {
+    echo "# gemini-box config"
+    echo "DNS_MODE=$DNS_MODE"
+    echo "DNS_IP=$DNS_IP"
+    local i=0
+    while [[ $i -lt ${#EXTRA_ENV_ARGS[@]} ]]; do
+      if [[ "${EXTRA_ENV_ARGS[i]}" == "-e" ]]; then
+        echo "ENV ${EXTRA_ENV_ARGS[i+1]}"
+        i=$((i+2))
+      else
+        i=$((i+1))
+      fi
+    done
+  } > "$GEMINI_BOX_CONFIG_FILE"
+}
+
+parse_image_reference() {
+  local ref="$1"
+  local last_segment="${ref##*/}"
+
+  if [[ "$last_segment" == *:* ]]; then
+    IMAGE_REPO="${ref%:*}"
+    IMAGE_TAG_BASE="${ref##*:}"
+  else
+    IMAGE_REPO="$ref"
+    IMAGE_TAG_BASE="latest"
+  fi
+}
+
+get_latest_gemini_version() {
+  docker run --rm "${DNS_ARGS[@]}" --entrypoint npm node:24-bookworm \
+    view @google/gemini-cli version --silent 2>/dev/null | tr -d $'\r' | tail -n1
+}
+
+cleanup_old_gemini_images() {
+  local prefix="$IMAGE_REPO:${IMAGE_TAG_BASE}-gemini-"
+  local image_ref
+
+  while IFS= read -r image_ref; do
+    [[ -z "$image_ref" ]] && continue
+    [[ "$image_ref" == "$TARGET_IMAGE_NAME" ]] && continue
+    [[ "$image_ref" == "$prefix"* ]] || continue
+    docker image rm "$image_ref" >/dev/null 2>&1 || true
+  done < <(docker image ls --format '{{.Repository}}:{{.Tag}}' "$IMAGE_REPO")
+}
+
+parse_image_reference "$BASE_IMAGE_NAME"
+load_config
+
+if [[ "$IMAGE_TAG_BASE" == *"-gemini-"* ]]; then
+  USE_VERSIONED_TAG=0
+fi
 
 # ------------------ argument parsing ------------------
 while [[ $# -gt 0 ]]; do
@@ -52,11 +167,13 @@ while [[ $# -gt 0 ]]; do
       BUILD=1; shift ;;
     --force-build)
       FORCE_BUILD=1; BUILD=1; shift ;;
+    --no-auto-update)
+      AUTO_UPDATE=0; shift ;;
     --project)
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
       if [[ -n "${2:-}" ]]; then
-        EXTRA_ENV_ARGS+=(-e "$2")
+        set_env_arg "$2"
         shift 2
       else
         echo "Error: -e requires an argument (VAR or VAR=value)" >&2
@@ -67,8 +184,10 @@ while [[ $# -gt 0 ]]; do
       if [[ -n "${2:-}" ]]; then
         if [[ "$2" == "local" ]]; then
           DNS_MODE="local"
+          DNS_IP=""
         else
           DNS_IP="$2"
+          DNS_MODE=""
         fi
         shift 2
       else
@@ -76,6 +195,8 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       ;;
+    -s)
+      SAVE_CONFIG=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     --)
@@ -89,9 +210,30 @@ done
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
 mkdir -p "$GEMINI_DIR_HOST"
 
+# ------------------ DNS override ------------------
+if [[ "$DNS_MODE" == "local" ]]; then
+  if [[ -f /etc/resolv.conf ]]; then
+    LOCAL_DNS=$(grep -m1 '^nameserver' /etc/resolv.conf | awk '{print $2}')
+    if [[ -n "$LOCAL_DNS" ]]; then
+      DNS_ARGS+=(--dns "$LOCAL_DNS")
+      BUILD_NETWORK_ARGS+=(--network host)
+    else
+      echo "Error: could not determine local DNS from /etc/resolv.conf" >&2
+      exit 1
+    fi
+  else
+    echo "Error: /etc/resolv.conf not found for local DNS" >&2
+    exit 1
+  fi
+elif [[ -n "$DNS_IP" ]]; then
+  DNS_ARGS+=(--dns "$DNS_IP")
+fi
+
 # ------------------ inline Dockerfile ------------------
 DOCKERFILE=$(cat <<'EOF'
 FROM node:24-bookworm
+
+ARG GEMINI_VERSION=latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
@@ -113,7 +255,7 @@ RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_
   && dpkg -i /tmp/bat.deb || apt-get install -f -y \
   && rm /tmp/bat.deb
 
-RUN npm install -g @google/gemini-cli
+RUN npm install -g "@google/gemini-cli@${GEMINI_VERSION}"
 
 ENV HOME=/home/node
 WORKDIR /workspace
@@ -125,19 +267,47 @@ EOF
 
 # ------------------ build image ------------------
 image_exists() {
-  docker image inspect "$IMAGE_NAME" >/dev/null 2>&1
+  docker image inspect "$1" >/dev/null 2>&1
 }
 
-if [[ "$BUILD" -eq 1 || "$FORCE_BUILD" -eq 1 ]] || ! image_exists; then
-  echo "▶ Building Docker image: $IMAGE_NAME"
-  if [[ "$FORCE_BUILD" -eq 1 ]]; then
-    docker build --no-cache -t "$IMAGE_NAME" - <<EOF
-$DOCKERFILE
-EOF
+if [[ "$AUTO_UPDATE" -eq 1 && "$USE_VERSIONED_TAG" -eq 1 ]]; then
+  LATEST_GEMINI_VERSION="$(get_latest_gemini_version || true)"
+  if [[ -n "$LATEST_GEMINI_VERSION" ]]; then
+    TARGET_IMAGE_NAME="$IMAGE_REPO:${IMAGE_TAG_BASE}-gemini-$LATEST_GEMINI_VERSION"
   else
-    docker build -t "$IMAGE_NAME" - <<EOF
+    echo "Warning: could not determine latest @google/gemini-cli version, continuing with base image tag: $BASE_IMAGE_NAME" >&2
+    TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+  fi
+else
+  TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+fi
+
+if [[ "$BUILD" -eq 1 || "$FORCE_BUILD" -eq 1 ]] || ! image_exists "$TARGET_IMAGE_NAME"; then
+  echo "▶ Building Docker image: $TARGET_IMAGE_NAME"
+  if [[ "$FORCE_BUILD" -eq 1 ]]; then
+    if [[ -n "$LATEST_GEMINI_VERSION" ]]; then
+      docker build --no-cache "${BUILD_NETWORK_ARGS[@]}" --build-arg "GEMINI_VERSION=$LATEST_GEMINI_VERSION" -t "$TARGET_IMAGE_NAME" - <<EOF
 $DOCKERFILE
 EOF
+    else
+      docker build --no-cache "${BUILD_NETWORK_ARGS[@]}" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    fi
+  else
+    if [[ -n "$LATEST_GEMINI_VERSION" ]]; then
+      docker build "${BUILD_NETWORK_ARGS[@]}" --build-arg "GEMINI_VERSION=$LATEST_GEMINI_VERSION" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    else
+      docker build "${BUILD_NETWORK_ARGS[@]}" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    fi
+  fi
+
+  if [[ -n "$LATEST_GEMINI_VERSION" ]]; then
+    cleanup_old_gemini_images
   fi
 fi
 
@@ -149,25 +319,6 @@ done
 
 # Add extra environment variables from -e flags
 ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
-
-# ------------------ DNS override ------------------
-DNS_ARGS=()
-if [[ "$DNS_MODE" == "local" ]]; then
-  if [[ -f /etc/resolv.conf ]]; then
-    LOCAL_DNS=$(grep -m1 '^nameserver' /etc/resolv.conf | awk '{print $2}')
-    if [[ -n "$LOCAL_DNS" ]]; then
-      DNS_ARGS+=(--dns "$LOCAL_DNS")
-    else
-      echo "Error: could not determine local DNS from /etc/resolv.conf" >&2
-      exit 1
-    fi
-  else
-    echo "Error: /etc/resolv.conf not found for local DNS" >&2
-    exit 1
-  fi
-elif [[ -n "$DNS_IP" ]]; then
-  DNS_ARGS+=(--dns "$DNS_IP")
-fi
 
 # ------------------ X11 / Wayland passthrough ------------------
 # X11 session support
@@ -212,6 +363,10 @@ fi
 DOCKER_ARGS=(run --rm --add-host=host.docker.internal:host-gateway)
 [[ -t 0 ]] && [[ -t 1 ]] && DOCKER_ARGS+=(-it)
 
+if [[ "$SAVE_CONFIG" -eq 1 ]]; then
+  save_config
+fi
+
 exec docker "${DOCKER_ARGS[@]}" \
   "${DNS_ARGS[@]}" \
   "${ENV_ARGS[@]}" \
@@ -221,5 +376,5 @@ exec docker "${DOCKER_ARGS[@]}" \
   -v "$GEMINI_DIR_HOST:$GEMINI_DIR_CONT" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
-  "$IMAGE_NAME" \
+  "$TARGET_IMAGE_NAME" \
   "$@"

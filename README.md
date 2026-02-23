@@ -72,6 +72,18 @@ Examples:
 ./codex-box.sh -d local -e HTTP_PROXY=http://proxy:3128 -s -- --help
 ```
 
+### Disable Auto-Update Check
+
+By default, all wrappers check the latest CLI version from npm and may rebuild
+to a versioned image tag. Use `--no-auto-update` to skip that check and use the
+base image tag only.
+
+```bash
+./codex-box.sh --no-auto-update -- --help
+./claude-box.sh --no-auto-update -- --help
+./gemini-box.sh --no-auto-update -- --help
+```
+
 ### Using a Different Project Directory
 
 ```bash
@@ -122,6 +134,18 @@ address to pass through as `--dns`.
 
 Use `-s` to save the current `-d` and `-e` settings to `~/.codex-box/config`.
 The file is loaded automatically on startup and CLI flags override saved values.
+
+The same behavior is available in the other wrappers:
+
+- `claude-box.sh` uses `~/.claude-box/config`
+- `gemini-box.sh` uses `~/.gemini-box/config`
+
+Examples:
+
+```bash
+./claude-box.sh -d local -e HTTP_PROXY=http://proxy:3128 -s -- --help
+./gemini-box.sh -d 1.1.1.1 -e HTTP_PROXY=http://proxy:3128 -s -- --help
+```
 
 ---
 

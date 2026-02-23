@@ -5,7 +5,7 @@ set -euo pipefail
 # codex-box — single-file runner for Codex CLI in Docker
 # ------------------------------------------------------------
 
-IMAGE_NAME="${CODEX_IMAGE:-codex-box:node24}"
+BASE_IMAGE_NAME="${CODEX_IMAGE:-codex-box:node24}"
 PROJECT_DIR="${CODEX_PROJECT_DIR:-$PWD}"
 CODEX_DIR_HOST="${CODEX_DIR_HOST:-$HOME/.codex}"
 CODEX_BOX_CONFIG_DIR="${CODEX_BOX_CONFIG_DIR:-$HOME/.codex-box}"
@@ -22,12 +22,20 @@ SESSION_ENV_ARGS=()
 SESSION_DOCKER_ARGS=()
 DNS_MODE=""
 DNS_IP=""
+DNS_ARGS=()
+BUILD_NETWORK_ARGS=()
 SAVE_CONFIG=0
+LATEST_CODEX_VERSION=""
+IMAGE_REPO=""
+IMAGE_TAG_BASE=""
+TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+USE_VERSIONED_TAG=1
+AUTO_UPDATE=1
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./codex-box.sh [--build] [--force-build] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [codex-args...]
+  ./codex-box.sh [--build] [--force-build] [--no-auto-update] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [codex-args...]
 
 Examples:
   ./codex-box.sh -- --help
@@ -38,15 +46,53 @@ Examples:
 Options:
   --build         Build the image if it does not exist yet
   --force-build   Always rebuild the image (no cache)
+  --no-auto-update Disable Codex version check and auto rebuild to latest version
   --project PATH  Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
   -s               Save -d and -e settings to ~/.codex-box/config
 
+Auto-update:
+  By default, codex-box checks the latest @openai/codex version from npm.
+  It builds/runs a versioned image tag (<base-tag>-codex-<version>) and
+  rebuilds automatically when a newer Codex version is available.
+  After a successful rebuild, old codex version tags for the same base tag
+  are removed.
+
 Display/Session passthrough:
   If an X11 or Wayland session is detected, codex-box automatically forwards
   the needed env vars and sockets so Codex can access desktop image input.
 EOF
+}
+
+parse_image_reference() {
+  local ref="$1"
+  local last_segment="${ref##*/}"
+
+  if [[ "$last_segment" == *:* ]]; then
+    IMAGE_REPO="${ref%:*}"
+    IMAGE_TAG_BASE="${ref##*:}"
+  else
+    IMAGE_REPO="$ref"
+    IMAGE_TAG_BASE="latest"
+  fi
+}
+
+get_latest_codex_version() {
+  docker run --rm "${DNS_ARGS[@]}" --entrypoint npm node:24-bookworm \
+    view @openai/codex version --silent 2>/dev/null | tr -d $'\r' | tail -n1
+}
+
+cleanup_old_codex_images() {
+  local prefix="$IMAGE_REPO:${IMAGE_TAG_BASE}-codex-"
+  local image_ref
+
+  while IFS= read -r image_ref; do
+    [[ -z "$image_ref" ]] && continue
+    [[ "$image_ref" == "$TARGET_IMAGE_NAME" ]] && continue
+    [[ "$image_ref" == "$prefix"* ]] || continue
+    docker image rm "$image_ref" >/dev/null 2>&1 || true
+  done < <(docker image ls --format '{{.Repository}}:{{.Tag}}' "$IMAGE_REPO")
 }
 
 set_env_arg() {
@@ -108,6 +154,11 @@ save_config() {
 }
 
 load_config
+parse_image_reference "$BASE_IMAGE_NAME"
+
+if [[ "$IMAGE_TAG_BASE" == *"-codex-"* ]]; then
+  USE_VERSIONED_TAG=0
+fi
 
 # ------------------ argument parsing ------------------
 while [[ $# -gt 0 ]]; do
@@ -116,6 +167,8 @@ while [[ $# -gt 0 ]]; do
       BUILD=1; shift ;;
     --force-build)
       FORCE_BUILD=1; BUILD=1; shift ;;
+    --no-auto-update)
+      AUTO_UPDATE=0; shift ;;
     --project)
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
@@ -157,74 +210,13 @@ done
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
 mkdir -p "$CODEX_DIR_HOST"
 
-# ------------------ inline Dockerfile ------------------
-DOCKERFILE=$(cat <<'EOF'
-FROM node:24-bookworm
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git openssh-client tini curl wget \
-    jq tree less vim \
-  && rm -rf /var/lib/apt/lists/*
-
-# Install ripgrep (rg)
-RUN curl -L https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep_14.1.1_amd64.deb -o /tmp/ripgrep.deb \
-  && dpkg -i /tmp/ripgrep.deb || apt-get install -f -y \
-  && rm /tmp/ripgrep.deb
-
-# Install fd-find (fd)
-RUN curl -L https://github.com/sharkdp/fd/releases/download/v9.0.0/fd_9.0.0_amd64.deb -o /tmp/fd.deb \
-  && dpkg -i /tmp/fd.deb || apt-get install -f -y \
-  && rm /tmp/fd.deb
-
-# Install bat
-RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_amd64.deb -o /tmp/bat.deb \
-  && dpkg -i /tmp/bat.deb || apt-get install -f -y \
-  && rm /tmp/bat.deb
-
-RUN npm install -g @openai/codex
-
-ENV HOME=/home/node
-WORKDIR /workspace
-USER node
-
-ENTRYPOINT ["/usr/bin/tini","--","codex"]
-EOF
-)
-
-# ------------------ build image ------------------
-image_exists() {
-  docker image inspect "$IMAGE_NAME" >/dev/null 2>&1
-}
-
-if [[ "$BUILD" -eq 1 || "$FORCE_BUILD" -eq 1 ]] || ! image_exists; then
-  echo "▶ Building Docker image: $IMAGE_NAME"
-  if [[ "$FORCE_BUILD" -eq 1 ]]; then
-    docker build --no-cache -t "$IMAGE_NAME" - <<EOF
-$DOCKERFILE
-EOF
-  else
-    docker build -t "$IMAGE_NAME" - <<EOF
-$DOCKERFILE
-EOF
-  fi
-fi
-
-# ------------------ env passthrough ------------------
-ENV_ARGS=()
-for var in OPENAI_API_KEY OPENAI_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY; do
-  [[ -n "${!var:-}" ]] && ENV_ARGS+=(-e "$var=${!var}")
-done
-
-# Add extra environment variables from -e flags
-ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
-
 # ------------------ DNS override ------------------
-DNS_ARGS=()
 if [[ "$DNS_MODE" == "local" ]]; then
   if [[ -f /etc/resolv.conf ]]; then
     LOCAL_DNS=$(grep -m1 '^nameserver' /etc/resolv.conf | awk '{print $2}')
     if [[ -n "$LOCAL_DNS" ]]; then
       DNS_ARGS+=(--dns "$LOCAL_DNS")
+      BUILD_NETWORK_ARGS+=(--network host)
     else
       echo "Error: could not determine local DNS from /etc/resolv.conf" >&2
       exit 1
@@ -236,6 +228,88 @@ if [[ "$DNS_MODE" == "local" ]]; then
 elif [[ -n "$DNS_IP" ]]; then
   DNS_ARGS+=(--dns "$DNS_IP")
 fi
+
+# ------------------ inline Dockerfile ------------------
+DOCKERFILE=$(cat <<'EOF'
+FROM node:24-bookworm
+
+ARG CODEX_VERSION=latest
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git openssh-client tini curl wget \
+    jq tree less vim \
+    ripgrep \
+    fd-find \
+    bat \
+    python3-yaml \
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+  && ln -sf /usr/bin/batcat /usr/local/bin/bat \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g "@openai/codex@${CODEX_VERSION}"
+
+ENV HOME=/home/node
+WORKDIR /workspace
+USER node
+
+ENTRYPOINT ["/usr/bin/tini","--","codex"]
+EOF
+)
+
+# ------------------ build image ------------------
+image_exists() {
+  docker image inspect "$1" >/dev/null 2>&1
+}
+
+if [[ "$AUTO_UPDATE" -eq 1 && "$USE_VERSIONED_TAG" -eq 1 ]]; then
+  LATEST_CODEX_VERSION="$(get_latest_codex_version || true)"
+  if [[ -n "$LATEST_CODEX_VERSION" ]]; then
+    TARGET_IMAGE_NAME="$IMAGE_REPO:${IMAGE_TAG_BASE}-codex-$LATEST_CODEX_VERSION"
+  else
+    echo "Warning: could not determine latest @openai/codex version, continuing with base image tag: $BASE_IMAGE_NAME" >&2
+    TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+  fi
+else
+  TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+fi
+
+if [[ "$BUILD" -eq 1 || "$FORCE_BUILD" -eq 1 ]] || ! image_exists "$TARGET_IMAGE_NAME"; then
+  echo "▶ Building Docker image: $TARGET_IMAGE_NAME"
+  if [[ "$FORCE_BUILD" -eq 1 ]]; then
+    if [[ -n "$LATEST_CODEX_VERSION" ]]; then
+      docker build --no-cache "${BUILD_NETWORK_ARGS[@]}" --build-arg "CODEX_VERSION=$LATEST_CODEX_VERSION" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    else
+      docker build --no-cache "${BUILD_NETWORK_ARGS[@]}" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    fi
+  else
+    if [[ -n "$LATEST_CODEX_VERSION" ]]; then
+      docker build "${BUILD_NETWORK_ARGS[@]}" --build-arg "CODEX_VERSION=$LATEST_CODEX_VERSION" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    else
+      docker build "${BUILD_NETWORK_ARGS[@]}" -t "$TARGET_IMAGE_NAME" - <<EOF
+$DOCKERFILE
+EOF
+    fi
+  fi
+
+  if [[ -n "$LATEST_CODEX_VERSION" ]]; then
+    cleanup_old_codex_images
+  fi
+fi
+
+# ------------------ env passthrough ------------------
+ENV_ARGS=()
+for var in OPENAI_API_KEY OPENAI_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+  [[ -n "${!var:-}" ]] && ENV_ARGS+=(-e "$var=${!var}")
+done
+
+# Add extra environment variables from -e flags
+ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
 
 # ------------------ X11 / Wayland passthrough ------------------
 # X11 session support
@@ -293,5 +367,5 @@ exec docker "${DOCKER_ARGS[@]}" \
   -v "$CODEX_DIR_HOST:$CODEX_DIR_CONT" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
-  "$IMAGE_NAME" \
+  "$TARGET_IMAGE_NAME" \
   "$@"
