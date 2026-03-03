@@ -241,7 +241,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep \
     fd-find \
     bat \
-    python3-yaml \
+    python3-yaml python3-pytest \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && ln -sf /usr/bin/batcat /usr/local/bin/bat \
   && rm -rf /var/lib/apt/lists/*

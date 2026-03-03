@@ -237,7 +237,7 @@ ARG GEMINI_VERSION=latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
-    jq tree less vim \
+    jq tree less vim python3-yaml python3-pytest \
   && rm -rf /var/lib/apt/lists/*
 
 # Install ripgrep (rg)
