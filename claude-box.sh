@@ -325,7 +325,7 @@ ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
 
 # ------------------ extra mounts ------------------
 if [[ -f "$CLAUDE_JSON_HOST" ]]; then
-  EXTRA_MOUNT_ARGS+=(-v "$CLAUDE_JSON_HOST:$CLAUDE_JSON_CONT:ro")
+  EXTRA_MOUNT_ARGS+=(-v "$CLAUDE_JSON_HOST:$CLAUDE_JSON_CONT:rw")
 fi
 
 # ------------------ X11 / Wayland passthrough ------------------
