@@ -1,28 +1,43 @@
 # codex-box
 
-A minimal, single-file Docker wrapper for running the OpenAI Codex CLI,
-Claude Code and Gemini CLI with persistent sessions, safe UID handling
-and a project-local workspace.
+A collection of minimal, single-file Docker wrappers for running AI coding
+CLIs and agent harnesses with persistent config, isolated execution, and a
+project-local workspace.
 
-`codex-box` lets you run Codex in an isolated container while behaving like a
-local CLI tool.
+Available wrappers:
 
-`claude-box` lets you run Claude Code in an isolated container while behaving like a
-local CLI tool.
-
-`gemini-box` lets you run Gemini CLI in an isolated container while behaving like a
-local CLI tool.
+- `codex-box.sh` — OpenAI Codex CLI
+- `claude-box.sh` — Claude Code
+- `gemini-box.sh` — Gemini CLI
+- `kimi-box.sh` — Kimi Code CLI
+- `omo-box.sh` — OpenCode with Oh My OpenAgent
+- `hermes-agent-box.sh` — Hermes Agent
+- `hermes-agent-gateway-box.sh` — Hermes gateway runner
 
 ---
 
 ## Features
 
-- **Single-file setup** – just download `codex-box.sh` (or equivalent)
-- **Persistent Codex sessions and config** via `~/.codex` (or tool specific directories/files)
-- **Runs as non-root** (uses the `node` user, UID 1000)
+- **Single-file setup** – just download the wrapper you want
+- **Persistent sessions and config** via tool-specific host directories
+- **Runs in isolated containers** with tool-specific images
+- **Runs as non-root** where supported by the wrapped CLI
 - **Project-local execution** (current directory mounted as workspace)
 - **No Dockerfile needed** – image is built automatically
 - **Compatible with MCP servers** (stdio or HTTP)
+- **Better terminal compatibility** via locale, terminfo, and terminal env passthrough
+
+## Included Wrappers
+
+| Script | Tool | Persistent host data |
+|--------|------|----------------------|
+| `codex-box.sh` | Codex CLI | `~/.codex` |
+| `claude-box.sh` | Claude Code | `~/.claude`, `~/.claude.json` |
+| `gemini-box.sh` | Gemini CLI | `~/.gemini` |
+| `kimi-box.sh` | Kimi Code CLI | `~/.kimi` |
+| `omo-box.sh` | OpenCode + Oh My OpenAgent | `~/.config/opencode`, `~/.local/share/opencode`, project `.opencode/` |
+| `hermes-agent-box.sh` | Hermes Agent | `~/.hermes`, `~/.codex`, `~/.hermes_history` |
+| `hermes-agent-gateway-box.sh` | Hermes gateway | `~/.hermes`, `~/.codex`, `~/.hermes_history` |
 
 ---
 
@@ -30,10 +45,10 @@ local CLI tool.
 
 - Docker (or Podman with Docker compatible mode)
 - Bash
-- Athorization for specific tool
+- Authorization for the specific tool/provider you want to use
 
 ---
-_Examples below are for codex-box.sh._
+_Examples below are primarily for `codex-box.sh`, but the same flags are used by the other wrappers unless noted otherwise._
 ---
 
 ## Installation
@@ -43,6 +58,12 @@ Download the script and make it executable:
 ```bash
 curl -LO https://raw.githubusercontent.com/davidruzicka/codex-box/main/codex-box.sh
 chmod +x codex-box.sh
+```
+
+Or copy any of the other wrappers:
+
+```bash
+chmod +x claude-box.sh gemini-box.sh kimi-box.sh omo-box.sh hermes-agent-box.sh hermes-agent-gateway-box.sh
 ```
 
 Optionally build the Docker image ahead of time:
@@ -74,14 +95,16 @@ Examples:
 
 ### Disable Auto-Update Check
 
-By default, all wrappers check the latest CLI version from npm and may rebuild
-to a versioned image tag. Use `--no-auto-update` to skip that check and use the
-base image tag only.
+By default, wrappers that support version tracking check the latest CLI version
+from the upstream registry and may rebuild to a versioned image tag. Use
+`--no-auto-update` to skip that check and use the base image tag only.
 
 ```bash
 ./codex-box.sh --no-auto-update -- --help
 ./claude-box.sh --no-auto-update -- --help
 ./gemini-box.sh --no-auto-update -- --help
+./kimi-box.sh --no-auto-update -- --help
+./omo-box.sh --no-auto-update -- --help
 ```
 
 ### Using a Different Project Directory
@@ -94,11 +117,11 @@ base image tag only.
 
 ## How It Works
 
-- The script builds a Docker image based on `node:24`
-- Codex is installed globally inside the image
-- Your local `~/.codex` is mounted into the container at `/home/node/.codex`
+- The wrapper builds a Docker image on demand
+- The target CLI or agent harness is installed inside the image
+- Tool-specific config directories are mounted from the host
 - The project directory is mounted at `/workspace`
-- Codex runs as the non-root `node` user
+- The wrapped CLI runs inside Docker but behaves like a local command
 
 This ensures:
 - persistent sessions and configuration
@@ -113,9 +136,32 @@ The following variables are passed through to the container if set:
 
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_BASE_URL`
+- `GOOGLE_API_KEY`
+- `GEMINI_API_KEY`
+- `GOOGLE_APPLICATION_CREDENTIALS`
+- `KIMI_API_KEY`
+- `KIMI_BASE_URL`
+- `KIMI_MODEL_NAME`
+- `KIMI_SHARE_DIR`
+- `OPENROUTER_API_KEY`
+- `OPENCODE_API_KEY`
+- `OPENCODE_CONFIG`
+- `OPENCODE_CONFIG_CONTENT`
 - `HTTP_PROXY`
 - `HTTPS_PROXY`
 - `NO_PROXY`
+- `TERM`
+- `COLORTERM`
+- `TERM_PROGRAM`
+- `TERM_PROGRAM_VERSION`
+- `LANG`
+- `LC_ALL`
+- `LC_CTYPE`
+
+If these variables are not set, the wrappers default to `TERM=xterm-256color`
+and UTF-8 locale settings.
 
 You can also override internal settings:
 
@@ -139,6 +185,10 @@ The same behavior is available in the other wrappers:
 
 - `claude-box.sh` uses `~/.claude-box/config`
 - `gemini-box.sh` uses `~/.gemini-box/config`
+- `kimi-box.sh` uses `~/.kimi-box/config`
+- `omo-box.sh` uses `~/.omo-box/config`
+- `hermes-agent-box.sh` uses `~/.hermes-agent-box/config`
+- `hermes-agent-gateway-box.sh` uses `~/.hermes-agent-gateway-box/config`
 
 Examples:
 
@@ -153,9 +203,54 @@ Examples:
 
 Codex MCP servers are configured via `~/.codex/config.toml`.
 
+Other wrappers use their native config locations, for example:
+
+- Claude Code: `~/.claude` and `~/.claude.json`
+- Kimi Code CLI: `~/.kimi/config.toml` and `~/.kimi/mcp.json`
+- OpenCode / Oh My OpenAgent: `~/.config/opencode/opencode.json`, `~/.local/share/opencode/auth.json`, and project `.opencode/`
+- Hermes Agent: `~/.hermes/`
+
+Note: `omo-box.sh` does not reuse authentication from `~/.codex`, `~/.claude`,
+`~/.claude.json`, or `~/.kimi`. OpenCode stores its own credentials under
+`~/.local/share/opencode/`.
+
+`omo-box.sh` additionally mounts Claude Code config as read-only (if present):
+
+- `~/.claude` → `/home/node/.claude:ro`
+- `~/.claude.json` → `/home/node/.claude.json:ro`
+
+This lets OpenCode/OMO reuse Claude-related settings without duplicating config.
+
+Privacy defaults in `omo-box.sh`:
+
+- If neither `OPENCODE_CONFIG` nor `OPENCODE_CONFIG_CONTENT` is set,
+	`omo-box.sh` injects default OpenCode config with:
+	- `share: "disabled"`
+	- `experimental.openTelemetry: false`
+	- `autoupdate: false` (wrapper handles updates itself)
+- If you pass `OPENCODE_CONFIG` or `OPENCODE_CONFIG_CONTENT`, your value is
+	used as-is and wrapper defaults are not injected.
+
 Both stdio-based MCP servers and HTTP-based MCP servers are supported.
 For HTTP MCP servers, it is recommended to run them in an isolated Docker
 network and attach `codex-box` to that network.
+
+---
+
+## Terminal Compatibility
+
+Terminal apps inside Docker can show wrong colors or broken box-drawing /
+Unicode characters when the container does not have matching locale or
+terminfo data, or when terminal capability variables are not forwarded.
+
+These wrappers address that by:
+
+- installing `locales` and `ncurses-term` in the image
+- setting `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`
+- forwarding terminal-related variables such as `TERM` and `COLORTERM`
+
+This improves behavior for tools such as `vim`, `less`, `bat`, and interactive
+agent CLIs running in the container.
 
 ---
 
