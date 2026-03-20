@@ -240,8 +240,8 @@ ARG CLAUDE_VERSION=latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
-    jq tree less vim python3-yaml python3-pytest \
-  && rm -rf /var/lib/apt/lists/*
+    jq tree less vim locales ncurses-term python3-yaml python3-pytest \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install ripgrep (rg)
 RUN curl -L https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep_14.1.1_amd64.deb -o /tmp/ripgrep.deb \
@@ -261,6 +261,8 @@ RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
 
 ENV HOME=/home/node
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 WORKDIR /workspace
 USER node
 
@@ -316,12 +318,18 @@ fi
 
 # ------------------ env passthrough ------------------
 ENV_ARGS=()
-for var in ANTHROPIC_API_KEY ANTHROPIC_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+for var in ANTHROPIC_API_KEY ANTHROPIC_BASE_URL HTTP_PROXY HTTPS_PROXY NO_PROXY \
+           TERM COLORTERM TERM_PROGRAM TERM_PROGRAM_VERSION LANG LC_ALL LC_CTYPE; do
   [[ -n "${!var:-}" ]] && ENV_ARGS+=(-e "$var=${!var}")
 done
 
 # Add extra environment variables from -e flags
 ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
+ENV_ARGS+=(
+  -e "TERM=${TERM:-xterm-256color}"
+  -e "LANG=${LANG:-C.UTF-8}"
+  -e "LC_ALL=${LC_ALL:-C.UTF-8}"
+)
 
 # ------------------ extra mounts ------------------
 if [[ -f "$CLAUDE_JSON_HOST" ]]; then

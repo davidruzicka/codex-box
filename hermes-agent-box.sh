@@ -202,6 +202,7 @@ ARG HERMES_AGENT_GIT_REF=main
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
     jq tree less vim \
+    locales ncurses-term \
     ripgrep \
     fd-find \
     bat \
@@ -231,6 +232,7 @@ FROM node:24-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
     jq tree less vim \
+  locales ncurses-term \
     ripgrep \
     fd-find \
     bat \
@@ -248,6 +250,8 @@ COPY --from=builder --chown=node:node /opt/hermes-venv /opt/hermes-venv
 
 ENV HOME=/home/node \
     HERMES_HOME=/home/node/.hermes \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
     PATH=/opt/hermes-venv/bin:$PATH \
     PYTHONPATH=/opt/hermes-agent
 WORKDIR /workspace
@@ -271,12 +275,18 @@ fi
 
 # ------------------ env passthrough ------------------
 ENV_ARGS=()
-for var in OPENAI_API_KEY OPENAI_BASE_URL OPENROUTER_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+for var in OPENAI_API_KEY OPENAI_BASE_URL OPENROUTER_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY HTTP_PROXY HTTPS_PROXY NO_PROXY \
+           TERM COLORTERM TERM_PROGRAM TERM_PROGRAM_VERSION LANG LC_ALL LC_CTYPE; do
   [[ -n "${!var:-}" ]] && ENV_ARGS+=(-e "$var=${!var}")
 done
 
 # Add extra environment variables from -e flags
 ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
+ENV_ARGS+=(
+  -e "TERM=${TERM:-xterm-256color}"
+  -e "LANG=${LANG:-C.UTF-8}"
+  -e "LC_ALL=${LC_ALL:-C.UTF-8}"
+)
 
 # ------------------ X11 / Wayland passthrough ------------------
 # X11 session support
