@@ -39,6 +39,14 @@ Available wrappers:
 | `hermes-agent-box.sh` | Hermes Agent | `~/.hermes`, `~/.codex`, `~/.hermes_history` |
 | `hermes-agent-gateway-box.sh` | Hermes gateway | `~/.hermes`, `~/.codex`, `~/.hermes_history` |
 
+## Preinstalled helper tools
+
+- `gh` (GitHub CLI) is preinstalled in all wrappers.
+- `quint-code` is preinstalled only in wrappers where it is supported:
+	- `codex-box.sh`
+	- `claude-box.sh`
+	- `gemini-box.sh`
+
 ---
 
 ## Requirements

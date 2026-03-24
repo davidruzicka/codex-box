@@ -258,6 +258,9 @@ RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_
 
 RUN npm install -g "@google/gemini-cli@${GEMINI_VERSION}"
 
+# Install Quint Code (supported for Gemini CLI)
+RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash
+
 ENV HOME=/home/node
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8

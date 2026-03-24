@@ -250,6 +250,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN npm install -g "@openai/codex@${CODEX_VERSION}"
 
+# Install Quint Code (supported for Codex CLI)
+RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash
+
 ENV HOME=/home/node
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
