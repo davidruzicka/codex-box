@@ -240,8 +240,16 @@ ARG CLAUDE_VERSION=latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
-    jq tree less vim locales ncurses-term python3-yaml python3-pytest \
+  gh \
+    jq tree less vim nano locales ncurses-term python3-yaml python3-pytest \
+    fzf zsh unzip procps gnupg2 man-db \
     && rm -rf /var/lib/apt/lists/*
+
+ARG GIT_DELTA_VERSION=0.18.2
+RUN ARCH=$(dpkg --print-architecture) \
+  && wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" \
+  && dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" || apt-get install -f -y \
+  && rm -f "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
 # Install ripgrep (rg)
 RUN curl -L https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep_14.1.1_amd64.deb -o /tmp/ripgrep.deb \

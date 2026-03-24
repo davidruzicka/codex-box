@@ -250,6 +250,7 @@ ARG KIMI_VERSION=latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
+  gh \
     jq tree less vim \
     locales ncurses-term \
     ripgrep \
