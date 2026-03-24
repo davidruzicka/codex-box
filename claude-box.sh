@@ -268,6 +268,9 @@ RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_
 
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
 
+# Install Get Shit Done installer CLI (explicit use only)
+RUN npm install -g get-shit-done-cc@latest
+
 # Install Quint Code
 RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash
 
