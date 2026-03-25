@@ -208,7 +208,7 @@ done
 
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
-mkdir -p "$CODEX_DIR_HOST"
+mkdir -p "$CODEX_DIR_HOST" "$CODEX_DIR_HOST/skills"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -238,6 +238,7 @@ ARG CODEX_VERSION=latest
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
   gh \
+    bubblewrap \
     jq tree less vim \
     locales ncurses-term \
     ripgrep \
@@ -253,6 +254,23 @@ RUN npm install -g "@openai/codex@${CODEX_VERSION}"
 # Install Get Shit Done installer CLI (explicit use only)
 RUN npm install -g get-shit-done-cc@latest
 
+RUN cat > /usr/local/bin/codex-entrypoint <<'ENTRYPOINT' \
+  && chmod +x /usr/local/bin/codex-entrypoint
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! find "$HOME/.codex/skills" -maxdepth 2 -path '*/gsd-*/SKILL.md' -print -quit 2>/dev/null | grep -q .; then
+  if [[ -w "$HOME/.codex" || ( ! -e "$HOME/.codex" && -w "$HOME" ) ]]; then
+    if ! get-shit-done-cc --codex --global >/tmp/gsd-bootstrap.log 2>&1; then
+      echo "Warning: GSD bootstrap failed for Codex; continuing without GSD setup." >&2
+      cat /tmp/gsd-bootstrap.log >&2
+    fi
+  fi
+fi
+
+exec codex "$@"
+ENTRYPOINT
+
 # Install Quint Code (supported for Codex CLI)
 RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash
 
@@ -262,7 +280,7 @@ ENV LC_ALL=C.UTF-8
 WORKDIR /workspace
 USER node
 
-ENTRYPOINT ["/usr/bin/tini","--","codex"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/codex-entrypoint"]
 EOF
 )
 

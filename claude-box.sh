@@ -211,7 +211,7 @@ done
 
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
-mkdir -p "$CLAUDE_DIR_HOST"
+mkdir -p "$CLAUDE_DIR_HOST" "$CLAUDE_DIR_HOST/commands"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -271,6 +271,23 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
 # Install Get Shit Done installer CLI (explicit use only)
 RUN npm install -g get-shit-done-cc@latest
 
+RUN cat > /usr/local/bin/claude-entrypoint <<'ENTRYPOINT' \
+  && chmod +x /usr/local/bin/claude-entrypoint
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -d "$HOME/.claude/commands/gsd" ]]; then
+  if [[ -w "$HOME/.claude" || ( ! -e "$HOME/.claude" && -w "$HOME" ) ]]; then
+    if ! get-shit-done-cc --claude --global >/tmp/gsd-bootstrap.log 2>&1; then
+      echo "Warning: GSD bootstrap failed for Claude; continuing without GSD setup." >&2
+      cat /tmp/gsd-bootstrap.log >&2
+    fi
+  fi
+fi
+
+exec claude "$@"
+ENTRYPOINT
+
 # Install Quint Code
 RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash
 
@@ -280,7 +297,7 @@ ENV LC_ALL=C.UTF-8
 WORKDIR /workspace
 USER node
 
-ENTRYPOINT ["/usr/bin/tini","--","claude"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/claude-entrypoint"]
 EOF
 )
 

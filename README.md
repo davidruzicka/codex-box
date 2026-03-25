@@ -46,6 +46,8 @@ Available wrappers:
 	- `codex-box.sh`
 	- `claude-box.sh`
 	- `gemini-box.sh`
+	- On first container run, wrappers attempt best-effort bootstrap into mounted runtime config directories (`~/.codex`, `~/.claude`, `~/.gemini`) when writable.
+	- Wrappers auto-create required runtime directories on first run when they do not exist.
 	- It is explicit-use only and does not affect normal wrapper behavior unless invoked.
 	- Verification tip: use `which get-shit-done-cc` or `get-shit-done-cc --help`; avoid `--version` for passive checks because it may trigger installer flow.
 - `quint-code` is preinstalled only in wrappers where it is supported:

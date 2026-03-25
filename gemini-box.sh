@@ -208,7 +208,7 @@ done
 
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
-mkdir -p "$GEMINI_DIR_HOST"
+mkdir -p "$GEMINI_DIR_HOST" "$GEMINI_DIR_HOST/commands"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -264,13 +264,30 @@ RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/instal
 # Install Get Shit Done installer CLI (explicit use only)
 RUN npm install -g get-shit-done-cc@latest
 
+RUN cat > /usr/local/bin/gemini-entrypoint <<'ENTRYPOINT' \
+  && chmod +x /usr/local/bin/gemini-entrypoint
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -d "$HOME/.gemini/commands/gsd" ]]; then
+  if [[ -w "$HOME/.gemini" || ( ! -e "$HOME/.gemini" && -w "$HOME" ) ]]; then
+    if ! get-shit-done-cc --gemini --global >/tmp/gsd-bootstrap.log 2>&1; then
+      echo "Warning: GSD bootstrap failed for Gemini; continuing without GSD setup." >&2
+      cat /tmp/gsd-bootstrap.log >&2
+    fi
+  fi
+fi
+
+exec gemini "$@"
+ENTRYPOINT
+
 ENV HOME=/home/node
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 WORKDIR /workspace
 USER node
 
-ENTRYPOINT ["/usr/bin/tini","--","gemini"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/gemini-entrypoint"]
 EOF
 )
 
