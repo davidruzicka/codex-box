@@ -13,6 +13,7 @@ CLAUDE_DIR_HOST="${CLAUDE_DIR_HOST:-$HOME/.claude}"
 CLAUDE_JSON_HOST="${CLAUDE_JSON_HOST:-$HOME/.claude.json}"
 OMO_BOX_CONFIG_DIR="${OMO_BOX_CONFIG_DIR:-$HOME/.omo-box}"
 OMO_BOX_CONFIG_FILE="$OMO_BOX_CONFIG_DIR/config"
+OMO_TMP_DIR_HOST="${OMO_TMP_DIR_HOST:-$OMO_BOX_CONFIG_DIR/tmp}"
 
 HOME_CONT="/home/node"
 OMO_CONFIG_DIR_CONT="${HOME_CONT}/.config/opencode"
@@ -243,6 +244,7 @@ done
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
 mkdir -p "$OMO_CONFIG_DIR_HOST"
 mkdir -p "$OMO_DATA_DIR_HOST"
+mkdir -p "$OMO_TMP_DIR_HOST"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -436,6 +438,7 @@ exec docker "${DOCKER_ARGS[@]}" \
   -e HOME="$HOME_CONT" \
   -v "$OMO_CONFIG_DIR_HOST:$OMO_CONFIG_DIR_CONT" \
   -v "$OMO_DATA_DIR_HOST:$OMO_DATA_DIR_CONT" \
+  -v "$OMO_TMP_DIR_HOST:/tmp" \
   "${CLAUDE_MOUNT_ARGS[@]}" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \

@@ -11,6 +11,7 @@ CLAUDE_DIR_HOST="${CLAUDE_DIR_HOST:-$HOME/.claude}"
 CLAUDE_JSON_HOST="${CLAUDE_JSON_HOST:-$HOME/.claude.json}"
 CLAUDE_BOX_CONFIG_DIR="${CLAUDE_BOX_CONFIG_DIR:-$HOME/.claude-box}"
 CLAUDE_BOX_CONFIG_FILE="$CLAUDE_BOX_CONFIG_DIR/config"
+CLAUDE_TMP_DIR_HOST="${CLAUDE_TMP_DIR_HOST:-$CLAUDE_BOX_CONFIG_DIR/tmp}"
 
 HOME_CONT="/home/node"
 CLAUDE_DIR_CONT="${HOME_CONT}/.claude"
@@ -212,6 +213,7 @@ done
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
 mkdir -p "$CLAUDE_DIR_HOST" "$CLAUDE_DIR_HOST/commands"
+mkdir -p "$CLAUDE_TMP_DIR_HOST"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -436,6 +438,7 @@ exec docker "${DOCKER_ARGS[@]}" \
   -e HOME="$HOME_CONT" \
   "${EXTRA_MOUNT_ARGS[@]}" \
   -v "$CLAUDE_DIR_HOST:$CLAUDE_DIR_CONT" \
+  -v "$CLAUDE_TMP_DIR_HOST:/tmp" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
   "$TARGET_IMAGE_NAME" \

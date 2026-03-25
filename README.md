@@ -144,6 +144,13 @@ This ensures:
 - no file permission issues
 - reproducible execution
 
+Temporary workspace behavior:
+- Wrappers mount persistent host-backed `/tmp` into containers so crash/restart does not lose temporary files.
+- Default host location is `~/.<wrapper>-box/tmp` (or corresponding Hermes gateway box dir).
+- You can override per wrapper using `*_TMP_DIR_HOST` variables.
+- Optional cleanup (delete files older than 7 days):
+	`find ~/.codex-box/tmp ~/.claude-box/tmp ~/.gemini-box/tmp ~/.kimi-box/tmp ~/.omo-box/tmp ~/.hermes-agent-box/tmp ~/.hermes-agent-gateway-box/tmp -type f -mtime +7 -delete`
+
 ---
 
 ## Environment Variables
@@ -186,6 +193,15 @@ You can also override internal settings:
 | `CODEX_IMAGE` | Docker image name | `codex-box:node24` |
 | `CODEX_PROJECT_DIR` | Project directory to mount | current directory |
 | `CODEX_DIR_HOST` | Host Codex config directory | `~/.codex` |
+| `CODEX_TMP_DIR_HOST` | Host directory mounted to container `/tmp` | `~/.codex-box/tmp` |
+
+Other wrappers use analogous temp-dir overrides:
+- `CLAUDE_TMP_DIR_HOST`
+- `GEMINI_TMP_DIR_HOST`
+- `KIMI_TMP_DIR_HOST`
+- `OMO_TMP_DIR_HOST`
+- `HERMES_AGENT_TMP_DIR_HOST`
+- `HERMES_GATEWAY_TMP_DIR_HOST`
 
 ## DNS Override
 

@@ -10,6 +10,7 @@ PROJECT_DIR="${KIMI_PROJECT_DIR:-$PWD}"
 KIMI_DIR_HOST="${KIMI_DIR_HOST:-$HOME/.kimi}"
 KIMI_BOX_CONFIG_DIR="${KIMI_BOX_CONFIG_DIR:-$HOME/.kimi-box}"
 KIMI_BOX_CONFIG_FILE="$KIMI_BOX_CONFIG_DIR/config"
+KIMI_TMP_DIR_HOST="${KIMI_TMP_DIR_HOST:-$KIMI_BOX_CONFIG_DIR/tmp}"
 
 HOME_CONT="/home/kimi"
 KIMI_DIR_CONT="${HOME_CONT}/.kimi"
@@ -222,6 +223,7 @@ done
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
 mkdir -p "$KIMI_DIR_HOST"
+mkdir -p "$KIMI_TMP_DIR_HOST"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -401,6 +403,7 @@ exec docker "${DOCKER_ARGS[@]}" \
   "${SESSION_DOCKER_ARGS[@]}" \
   -e HOME="$HOME_CONT" \
   -v "$KIMI_DIR_HOST:$KIMI_DIR_CONT" \
+  -v "$KIMI_TMP_DIR_HOST:/tmp" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
   "$TARGET_IMAGE_NAME" \

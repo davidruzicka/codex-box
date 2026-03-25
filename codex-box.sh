@@ -10,6 +10,7 @@ PROJECT_DIR="${CODEX_PROJECT_DIR:-$PWD}"
 CODEX_DIR_HOST="${CODEX_DIR_HOST:-$HOME/.codex}"
 CODEX_BOX_CONFIG_DIR="${CODEX_BOX_CONFIG_DIR:-$HOME/.codex-box}"
 CODEX_BOX_CONFIG_FILE="$CODEX_BOX_CONFIG_DIR/config"
+CODEX_TMP_DIR_HOST="${CODEX_TMP_DIR_HOST:-$CODEX_BOX_CONFIG_DIR/tmp}"
 
 HOME_CONT="/home/node"
 CODEX_DIR_CONT="${HOME_CONT}/.codex"
@@ -209,6 +210,7 @@ done
 # ------------------ sanity checks ------------------
 [[ -d "$PROJECT_DIR" ]] || { echo "Error: project directory does not exist: $PROJECT_DIR" >&2; exit 1; }
 mkdir -p "$CODEX_DIR_HOST" "$CODEX_DIR_HOST/skills"
+mkdir -p "$CODEX_TMP_DIR_HOST"
 
 # ------------------ DNS override ------------------
 if [[ "$DNS_MODE" == "local" ]]; then
@@ -399,6 +401,7 @@ exec docker "${DOCKER_ARGS[@]}" \
   "${SESSION_DOCKER_ARGS[@]}" \
   -e HOME="$HOME_CONT" \
   -v "$CODEX_DIR_HOST:$CODEX_DIR_CONT" \
+  -v "$CODEX_TMP_DIR_HOST:/tmp" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
   "$TARGET_IMAGE_NAME" \
