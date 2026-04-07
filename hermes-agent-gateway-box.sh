@@ -202,6 +202,7 @@ ARG HERMES_AGENT_GIT_REF=main
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
   gh \
+    hunspell hunspell-cs hunspell-en-us \
     jq tree less vim \
     locales ncurses-term \
     ripgrep \
@@ -233,6 +234,7 @@ FROM node:24-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
     gh \
+    hunspell hunspell-cs hunspell-en-us \
     jq tree less vim \
   locales ncurses-term \
     ripgrep \

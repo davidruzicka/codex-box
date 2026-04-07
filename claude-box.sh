@@ -16,6 +16,9 @@ CLAUDE_TMP_DIR_HOST="${CLAUDE_TMP_DIR_HOST:-$CLAUDE_BOX_CONFIG_DIR/tmp}"
 HOME_CONT="/home/node"
 CLAUDE_DIR_CONT="${HOME_CONT}/.claude"
 CLAUDE_JSON_CONT="${HOME_CONT}/.claude.json"
+GSC_CREDENTIALS_CONT="${HOME_CONT}/.gsc-credentials.json"
+GA4_CREDENTIALS_CONT="${HOME_CONT}/.ga4-service-account.json"
+GADS_CREDENTIALS_CONT="${HOME_CONT}/google-ads.yaml"
 WORKDIR_CONT="/workspace"
 
 BUILD=0
@@ -243,6 +246,7 @@ ARG CLAUDE_VERSION=latest
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
   gh \
+    hunspell hunspell-cs hunspell-en-us \
     jq tree less vim nano locales ncurses-term python3-yaml python3-pytest \
     fzf zsh unzip procps gnupg2 man-db \
     && rm -rf /var/lib/apt/lists/*
@@ -269,6 +273,9 @@ RUN curl -L https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_
   && rm /tmp/bat.deb
 
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 # Install Get Shit Done installer CLI (explicit use only)
 RUN npm install -g get-shit-done-cc@latest
@@ -367,6 +374,21 @@ ENV_ARGS+=(
 # ------------------ extra mounts ------------------
 if [[ -f "$CLAUDE_JSON_HOST" ]]; then
   EXTRA_MOUNT_ARGS+=(-v "$CLAUDE_JSON_HOST:$CLAUDE_JSON_CONT:rw")
+fi
+
+if [[ -f "${GSC_CREDENTIALS_PATH:-}" ]]; then
+  EXTRA_MOUNT_ARGS+=(-v "$GSC_CREDENTIALS_PATH:$GSC_CREDENTIALS_CONT:ro")
+  SESSION_ENV_ARGS+=(-e "GSC_CREDENTIALS_PATH=$GSC_CREDENTIALS_CONT")
+fi
+
+if [[ -f "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+  EXTRA_MOUNT_ARGS+=(-v "$GOOGLE_APPLICATION_CREDENTIALS:$GA4_CREDENTIALS_CONT:ro")
+  SESSION_ENV_ARGS+=(-e "GOOGLE_APPLICATION_CREDENTIALS=$GA4_CREDENTIALS_CONT")
+fi
+
+if [[ -f "${GOOGLE_ADS_CREDENTIALS:-}" ]]; then
+  EXTRA_MOUNT_ARGS+=(-v "$GOOGLE_ADS_CREDENTIALS:$GADS_CREDENTIALS_CONT:ro")
+  SESSION_ENV_ARGS+=(-e "GOOGLE_ADS_CREDENTIALS=$GADS_CREDENTIALS_CONT")
 fi
 
 # ------------------ X11 / Wayland passthrough ------------------
