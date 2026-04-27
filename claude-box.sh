@@ -38,11 +38,12 @@ IMAGE_TAG_BASE=""
 TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
 USE_VERSIONED_TAG=1
 AUTO_UPDATE=1
+NETWORK_HOST=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./claude-box.sh [--build] [--force-build] [--no-auto-update] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [claude-args...]
+  ./claude-box.sh [--build] [--force-build] [--no-auto-update] [--network-host] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [claude-args...]
 
 Examples:
   ./claude-box.sh -- --help
@@ -54,6 +55,7 @@ Options:
   --build         Build the image if it does not exist yet
   --force-build   Always rebuild the image (no cache)
   --no-auto-update Disable Claude version check and auto rebuild to latest version
+  --network-host  Use host networking (workaround when bridge cannot reach host services)
   --project PATH  Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
@@ -176,6 +178,8 @@ while [[ $# -gt 0 ]]; do
       FORCE_BUILD=1; BUILD=1; shift ;;
     --no-auto-update)
       AUTO_UPDATE=0; shift ;;
+    --network-host)
+      NETWORK_HOST=1; shift ;;
     --project)
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
@@ -237,6 +241,8 @@ elif [[ -n "$DNS_IP" ]]; then
   DNS_ARGS+=(--dns "$DNS_IP")
 fi
 
+HOST_GATEWAY_TARGET="${CLAUDE_HOST_GATEWAY_TARGET:-host-gateway}"
+
 # ------------------ inline Dockerfile ------------------
 DOCKERFILE=$(cat <<'EOF'
 FROM node:24-bookworm
@@ -245,10 +251,11 @@ ARG CLAUDE_VERSION=latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
-  gh \
+    gh \
     hunspell hunspell-cs hunspell-en-us \
     jq tree less vim nano locales ncurses-term python3-yaml python3-pytest \
     fzf zsh unzip procps gnupg2 man-db \
+    nmap iputils-ping bind9-dnsutils netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 ARG GIT_DELTA_VERSION=0.18.2
@@ -280,6 +287,12 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 # Install Get Shit Done installer CLI (explicit use only)
 RUN npm install -g get-shit-done-cc@latest
 
+# Install lean-ctx and run setup for the container user home
+RUN npm install -g lean-ctx-bin \
+  && mkdir -p /home/node \
+  && HOME=/home/node lean-ctx setup \
+  && if [ -d /home/node/.lean-ctx ]; then chown -R node:node /home/node/.lean-ctx; fi
+
 RUN cat > /usr/local/bin/claude-entrypoint <<'ENTRYPOINT' \
   && chmod +x /usr/local/bin/claude-entrypoint
 #!/usr/bin/env bash
@@ -297,8 +310,10 @@ fi
 exec claude "$@"
 ENTRYPOINT
 
-# Install Quint Code
-RUN curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash
+# Install Quint Code / Haft when upstream installer works.
+RUN if ! curl -fsSL https://raw.githubusercontent.com/m0n0x41d/quint-code/main/install.sh | bash; then \
+      echo "Warning: quint-code/haft installer failed; continuing without Haft preinstall." >&2; \
+    fi
 
 ENV HOME=/home/node
 ENV LANG=C.UTF-8
@@ -436,7 +451,12 @@ if [[ $# -eq 0 ]]; then
 fi
 
 # Use -it only if TTY is available.
-DOCKER_ARGS=(run --rm --add-host=host.docker.internal:host-gateway)
+if [[ "$NETWORK_HOST" -eq 1 ]]; then
+  DNS_ARGS=()
+  DOCKER_ARGS=(run --rm --network host --add-host=host.docker.internal:127.0.0.1 --add-host=host.containers.internal:127.0.0.1)
+else
+  DOCKER_ARGS=(run --rm --add-host="host.docker.internal:$HOST_GATEWAY_TARGET" --add-host="host.containers.internal:$HOST_GATEWAY_TARGET")
+fi
 [[ -t 0 ]] && [[ -t 1 ]] && DOCKER_ARGS+=(-it)
 
 if [[ "$SAVE_CONFIG" -eq 1 ]]; then

@@ -1,0 +1,1 @@
+Always follow @AGENTS.md

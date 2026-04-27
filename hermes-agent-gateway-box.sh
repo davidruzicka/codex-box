@@ -31,11 +31,12 @@ BUILD_NETWORK_ARGS=()
 SAVE_CONFIG=0
 ACTION="start"
 TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+NETWORK_HOST=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./hermes-agent-gateway-box.sh [--build] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] [start|stop|restart|status|logs|rm]
+  ./hermes-agent-gateway-box.sh [--build] [--network-host] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] [start|stop|restart|status|logs|rm]
 
 Examples:
   ./hermes-agent-gateway-box.sh
@@ -53,10 +54,15 @@ Actions:
 
 Options:
   --build          Rebuild the image explicitly
+  --network-host   Use host networking (workaround when bridge cannot reach host services)
   --project PATH   Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
   -s               Save -d and -e settings to ~/.hermes-agent-gateway-box/config
+
+Networking mode tips:
+  Use default bridge mode when container-to-container networking is needed.
+  Use --network-host when host.docker.internal to host services times out/refuses.
 
 Persistent context mounts:
   ~/.hermes         -> /home/node/.hermes
@@ -129,6 +135,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --build)
       BUILD=1; shift ;;
+    --network-host)
+      NETWORK_HOST=1; shift ;;
     --project)
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
@@ -194,6 +202,8 @@ elif [[ -n "$DNS_IP" ]]; then
   DNS_ARGS+=(--dns "$DNS_IP")
 fi
 
+HOST_GATEWAY_TARGET="${HERMES_AGENT_HOST_GATEWAY_TARGET:-host-gateway}"
+
 DOCKERFILE=$(cat <<'EOF'
 FROM node:24-bookworm AS builder
 
@@ -248,6 +258,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && ln -sf /usr/bin/batcat /usr/local/bin/bat \
   && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g lean-ctx-bin \
+  && mkdir -p /home/node \
+  && HOME=/home/node lean-ctx setup \
+  && if [ -d /home/node/.lean-ctx ]; then chown -R node:node /home/node/.lean-ctx; fi
 
 COPY --from=builder --chown=node:node /opt/hermes-agent /opt/hermes-agent
 COPY --from=builder --chown=node:node /opt/hermes-venv /opt/hermes-venv
@@ -304,6 +319,15 @@ fi
 
 start_gateway() {
   build_image
+  local docker_net_args=()
+  local dns_args=("${DNS_ARGS[@]}")
+
+  if [[ "$NETWORK_HOST" -eq 1 ]]; then
+    dns_args=()
+    docker_net_args+=(--network host --add-host=host.docker.internal:127.0.0.1 --add-host=host.containers.internal:127.0.0.1)
+  else
+    docker_net_args+=(--add-host="host.docker.internal:$HOST_GATEWAY_TARGET" --add-host="host.containers.internal:$HOST_GATEWAY_TARGET")
+  fi
 
   if container_is_running; then
     echo "Gateway container '$CONTAINER_NAME' is already running."
@@ -323,8 +347,8 @@ start_gateway() {
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    --add-host=host.docker.internal:host-gateway \
-    "${DNS_ARGS[@]}" \
+    "${docker_net_args[@]}" \
+    "${dns_args[@]}" \
     "${ENV_ARGS[@]}" \
     -e HOME="$HOME_CONT" \
     -e HERMES_HOME="$HERMES_DIR_CONT" \

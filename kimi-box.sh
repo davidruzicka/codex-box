@@ -32,11 +32,13 @@ IMAGE_TAG_BASE=""
 TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
 USE_VERSIONED_TAG=1
 AUTO_UPDATE=1
+NETWORK_HOST=0
+DEBUG_MCP=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./kimi-box.sh [--build] [--force-build] [--no-auto-update] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [kimi-args...]
+  ./kimi-box.sh [--build] [--force-build] [--no-auto-update] [--network-host] [--debug-mcp] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [kimi-args...]
 
 Examples:
   ./kimi-box.sh -- --help
@@ -48,6 +50,8 @@ Options:
   --build         Build the image if it does not exist yet
   --force-build   Always rebuild the image (no cache)
   --no-auto-update Disable Kimi CLI version check and auto rebuild to latest version
+  --network-host  Use host networking (workaround when bridge cannot reach host services)
+  --debug-mcp     Print effective MCP config source and file path used for Kimi startup
   --project PATH  Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
@@ -183,6 +187,10 @@ while [[ $# -gt 0 ]]; do
       FORCE_BUILD=1; BUILD=1; shift ;;
     --no-auto-update)
       AUTO_UPDATE=0; shift ;;
+    --network-host)
+      NETWORK_HOST=1; shift ;;
+    --debug-mcp)
+      DEBUG_MCP=1; shift ;;
     --project)
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
@@ -244,6 +252,8 @@ elif [[ -n "$DNS_IP" ]]; then
   DNS_ARGS+=(--dns "$DNS_IP")
 fi
 
+HOST_GATEWAY_TARGET="${KIMI_HOST_GATEWAY_TARGET:-host-gateway}"
+
 # ------------------ inline Dockerfile ------------------
 DOCKERFILE=$(cat <<'EOF'
 FROM python:3.13-slim-bookworm
@@ -253,6 +263,7 @@ ARG KIMI_VERSION=latest
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git openssh-client tini curl wget \
   gh \
+    nodejs npm \
     hunspell hunspell-cs hunspell-en-us \
     jq tree less vim \
     locales ncurses-term \
@@ -275,6 +286,59 @@ RUN pip install --no-cache-dir uv \
 # Create non-root user matching the common host UID/GID assumption.
 RUN groupadd -g 1000 kimi && useradd -u 1000 -g 1000 -m -d /home/kimi kimi
 
+# Install lean-ctx and run setup for the container user home
+RUN npm install -g lean-ctx-bin \
+  && mkdir -p /home/kimi \
+  && HOME=/home/kimi lean-ctx setup \
+  && if [ -d /home/kimi/.lean-ctx ]; then chown -R kimi:kimi /home/kimi/.lean-ctx; fi
+
+RUN cat > /usr/local/bin/kimi-entrypoint <<'ENTRYPOINT' \
+  && chmod +x /usr/local/bin/kimi-entrypoint
+#!/usr/bin/env bash
+set -euo pipefail
+
+KIMI_MCP_SOURCE_FILE="$HOME/.kimi/mcp.json"
+KIMI_MCP_EFFECTIVE_FILE="/tmp/kimi-lean-ctx-mcp.json"
+DEBUG_MCP=0
+KIMI_ARGS=()
+
+for arg in "$@"; do
+  if [[ "$arg" == "--debug-mcp" ]]; then
+    DEBUG_MCP=1
+    continue
+  fi
+  if [[ "$arg" == "--mcp-config-file" || "$arg" == --mcp-config-file=* ]]; then
+    exec kimi "$@"
+  fi
+  KIMI_ARGS+=("$arg")
+done
+
+LEAN_CTX_JSON='{"mcpServers":{"lean-ctx":{"command":"lean-ctx","args":[]}}}'
+
+if [[ -r "$KIMI_MCP_SOURCE_FILE" ]]; then
+  if ! jq --argjson leanCtx "$LEAN_CTX_JSON" '
+      . as $root
+      | ($root // {})
+      | .mcpServers = ((.mcpServers // {}) + ($leanCtx.mcpServers))
+    ' "$KIMI_MCP_SOURCE_FILE" > "$KIMI_MCP_EFFECTIVE_FILE" 2>/dev/null; then
+    echo "Warning: failed to merge $KIMI_MCP_SOURCE_FILE; using lean-ctx-only MCP config." >&2
+    echo "$LEAN_CTX_JSON" > "$KIMI_MCP_EFFECTIVE_FILE"
+  fi
+else
+  echo "$LEAN_CTX_JSON" > "$KIMI_MCP_EFFECTIVE_FILE"
+fi
+
+if [[ "$DEBUG_MCP" -eq 1 ]]; then
+  if [[ -r "$KIMI_MCP_SOURCE_FILE" ]]; then
+    echo "kimi-box: merged MCP config from $KIMI_MCP_SOURCE_FILE -> $KIMI_MCP_EFFECTIVE_FILE" >&2
+  else
+    echo "kimi-box: using lean-ctx-only MCP config -> $KIMI_MCP_EFFECTIVE_FILE" >&2
+  fi
+fi
+
+exec kimi --mcp-config-file "$KIMI_MCP_EFFECTIVE_FILE" "${KIMI_ARGS[@]}"
+ENTRYPOINT
+
 ENV HOME=/home/kimi
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -282,7 +346,7 @@ ENV PATH="/usr/local/bin:$PATH"
 WORKDIR /workspace
 USER kimi
 
-ENTRYPOINT ["/usr/bin/tini","--","kimi"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/kimi-entrypoint"]
 EOF
 )
 
@@ -390,11 +454,21 @@ fi
 
 # ------------------ run ------------------
 # Use -it only if TTY is available
-DOCKER_ARGS=(run --rm --add-host=host.docker.internal:host-gateway)
+if [[ "$NETWORK_HOST" -eq 1 ]]; then
+  DNS_ARGS=()
+  DOCKER_ARGS=(run --rm --network host --add-host=host.docker.internal:127.0.0.1 --add-host=host.containers.internal:127.0.0.1)
+else
+  DOCKER_ARGS=(run --rm --add-host="host.docker.internal:$HOST_GATEWAY_TARGET" --add-host="host.containers.internal:$HOST_GATEWAY_TARGET")
+fi
 [[ -t 0 ]] && [[ -t 1 ]] && DOCKER_ARGS+=(-it)
 
 if [[ "$SAVE_CONFIG" -eq 1 ]]; then
   save_config
+fi
+
+CONTAINER_ARGS=()
+if [[ "$DEBUG_MCP" -eq 1 ]]; then
+  CONTAINER_ARGS+=(--debug-mcp)
 fi
 
 exec docker "${DOCKER_ARGS[@]}" \
@@ -408,4 +482,5 @@ exec docker "${DOCKER_ARGS[@]}" \
   -v "$PROJECT_DIR:$WORKDIR_CONT" \
   -w "$WORKDIR_CONT" \
   "$TARGET_IMAGE_NAME" \
+  "${CONTAINER_ARGS[@]}" \
   "$@"

@@ -31,11 +31,12 @@ DNS_ARGS=()
 BUILD_NETWORK_ARGS=()
 SAVE_CONFIG=0
 TARGET_IMAGE_NAME="$BASE_IMAGE_NAME"
+NETWORK_HOST=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./hermes-agent-box.sh [--build] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [hermes-args...]
+  ./hermes-agent-box.sh [--build] [--network-host] [--project <path>] [-e VAR[=value]]... [-d local|-d <ip>] [-s] -- [hermes-args...]
 
 Examples:
   ./hermes-agent-box.sh -- --help
@@ -45,10 +46,15 @@ Examples:
 
 Options:
   --build          Rebuild the image explicitly
+  --network-host   Use host networking (workaround when bridge cannot reach host services)
   --project PATH   Project directory to mount (default: current directory)
   -e VAR[=value]   Pass environment variable to container (can be used multiple times)
   -d MODE|IP       DNS mode: 'local' uses host resolver, or pass an IP address
   -s               Save -d and -e settings to ~/.hermes-agent-box/config
+
+Networking mode tips:
+  Use default bridge mode when container-to-container networking is needed.
+  Use --network-host when host.docker.internal to host services times out/refuses.
 
 Build behavior:
   Image is built only when:
@@ -131,6 +137,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --build)
       BUILD=1; shift ;;
+    --network-host)
+      NETWORK_HOST=1; shift ;;
     --project)
       PROJECT_DIR="$2"; shift 2 ;;
     -e)
@@ -195,6 +203,8 @@ elif [[ -n "$DNS_IP" ]]; then
   DNS_ARGS+=(--dns "$DNS_IP")
 fi
 
+HOST_GATEWAY_TARGET="${HERMES_AGENT_HOST_GATEWAY_TARGET:-host-gateway}"
+
 # ------------------ inline Dockerfile ------------------
 DOCKERFILE=$(cat <<'EOF'
 FROM node:24-bookworm AS builder
@@ -250,6 +260,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && ln -sf /usr/bin/batcat /usr/local/bin/bat \
   && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g lean-ctx-bin \
+  && mkdir -p /home/node \
+  && HOME=/home/node lean-ctx setup \
+  && if [ -d /home/node/.lean-ctx ]; then chown -R node:node /home/node/.lean-ctx; fi
 
 COPY --from=builder --chown=node:node /opt/hermes-agent /opt/hermes-agent
 COPY --from=builder --chown=node:node /opt/hermes-venv /opt/hermes-venv
@@ -333,7 +348,12 @@ if [[ -n "${WAYLAND_DISPLAY:-}" && -n "${XDG_RUNTIME_DIR:-}" ]]; then
 fi
 
 # ------------------ run ------------------
-DOCKER_ARGS=(run --rm --add-host=host.docker.internal:host-gateway)
+if [[ "$NETWORK_HOST" -eq 1 ]]; then
+  DNS_ARGS=()
+  DOCKER_ARGS=(run --rm --network host --add-host=host.docker.internal:127.0.0.1 --add-host=host.containers.internal:127.0.0.1)
+else
+  DOCKER_ARGS=(run --rm --add-host="host.docker.internal:$HOST_GATEWAY_TARGET" --add-host="host.containers.internal:$HOST_GATEWAY_TARGET")
+fi
 [[ -t 0 ]] && [[ -t 1 ]] && DOCKER_ARGS+=(-it)
 
 if [[ "$SAVE_CONFIG" -eq 1 ]]; then

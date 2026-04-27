@@ -54,6 +54,15 @@ Available wrappers:
 	- `codex-box.sh`
 	- `claude-box.sh`
 	- `gemini-box.sh`
+- `lean-ctx` is preinstalled and initialized (`lean-ctx setup`) in supported wrappers:
+	- `codex-box.sh`
+	- `claude-box.sh`
+	- `gemini-box.sh`
+	- `kimi-box.sh`
+	- `omo-box.sh`
+	- `hermes-agent-box.sh`
+	- `hermes-agent-gateway-box.sh`
+	- In `kimi-box.sh`, wrapper startup injects a `lean-ctx` MCP server via an ad-hoc `--mcp-config-file` (merged from `~/.kimi/mcp.json` when readable).
 
 ---
 
@@ -106,6 +115,7 @@ Examples:
 ./codex-box.sh -- -m gpt-4-codex
 ./codex-box.sh -d local -- --help
 ./codex-box.sh -d 192.168.31.1 -- --help
+./codex-box.sh --network-host -- --help
 ./codex-box.sh -d local -e HTTP_PROXY=http://proxy:3128 -s -- --help
 ```
 
@@ -207,6 +217,30 @@ Other wrappers use analogous temp-dir overrides:
 
 Use `-d local` to pass the host resolver into the container, or provide an IP
 address to pass through as `--dns`.
+
+## Host Networking Workaround
+
+Use `--network-host` when the container cannot reach host services over bridge
+networking (for example `host.docker.internal:3335` timing out on Linux).
+
+Example:
+
+```bash
+./claude-box.sh --network-host -- chat
+```
+
+### `hermes-agent-gateway-box.sh`: bridge vs `--network-host`
+
+- Prefer default bridge mode when container-to-container networking is needed.
+- Use `--network-host` when the gateway must reach host-local services and
+	bridge path to `host.docker.internal` is timing out/refused.
+
+Examples:
+
+```bash
+./hermes-agent-gateway-box.sh --network-host start
+./hermes-agent-gateway-box.sh --network-host restart
+```
 
 ## Saved Defaults
 
